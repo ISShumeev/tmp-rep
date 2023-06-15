@@ -1,0 +1,139 @@
+version: '3'
+services:
+  elasticdb:
+    restart: unless-stopped
+    image: elasticsearch:7.17.9
+    hostname: elasticdb
+    environment:
+      - bootstrap.memory_lock=true
+      - node.name=elasticdb
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - ELASTIC_USERNAME=${ELASTIC_LOGIN}
+      - ELASTIC_PASSWORD=${ELASTIC_PASS}
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - elasticdb-volume:/usr/share/elasticsearch/data
+    ports:
+      - 9200:9200
+      - 9600:9600
+
+  kibana:
+    restart: unless-stopped
+    image: kibana:7.17.9
+    depends_on:
+      - elasticdb
+    ports:
+      - 5601:5601
+    expose:
+      - "5601"
+
+    environment:
+      - ELASTICSEARCH_HOSTS="http://elasticdb:9200"
+      - ELASTICSEARCH_URL="http://elasticdb:9200"
+      - XPACK_SECURITY_ENABLED=true
+      - ELASTICSEARCH_USERNAME="${ELASTIC_LOGIN}"
+      - ELASTICSEARCH_PASSWORD="${ELASTIC_PASS}"
+
+  rabbitmq:
+    restart: unless-stopped
+    image: rabbitmq:management
+    hostname: rabbitmq
+    environment:
+      - RABBITMQ_DEFAULT_USER=${MQ_USER}
+      - RABBITMQ_DEFAULT_PASS=${MQ_PASS}
+    ports:
+      - 5672:5672
+      - 15672:15672
+    volumes:
+      - ./rabbitmq_cfg/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - ./rabbitmq_cfg/definitions.json:/etc/rabbitmq/definitions.json:ro
+
+  seclab_downloader:
+    restart: unless-stopped
+    depends_on:
+      - rabbitmq
+    build:
+      context: .
+      dockerfile: parsing_pipelines/seclab_microservices/downloader/Dockerfile
+    environment:
+      - MQ_HOST=rabbitmq
+      - MQ_PORT=5672
+      - MQ_USER=${MQ_USER}
+      - MQ_PASS=${MQ_PASS}
+      - URLS_QUEUE=${URLS_QUEUE}
+      - DOWNLOADED_PAGES_QUEUE=${DOWNLOADED_PAGES_QUEUE}
+
+  seclab_search_daemon:
+    restart: unless-stopped
+    depends_on:
+      - rabbitmq
+    build:
+      context: .
+      dockerfile: parsing_pipelines/seclab_microservices/search_daemon/Dockerfile
+    environment:
+      - MQ_HOST=rabbitmq
+      - MQ_PORT=5672
+      - MQ_USER=${MQ_USER}
+      - MQ_PASS=${MQ_PASS}
+      - URLS_QUEUE=${URLS_QUEUE}
+
+  seclab_parser:
+    restart: unless-stopped
+    depends_on:
+      - rabbitmq
+    build:
+      context: .
+      dockerfile: parsing_pipelines/seclab_microservices/parser/Dockerfile
+    environment:
+      - MQ_HOST=rabbitmq
+      - MQ_PORT=5672
+      - MQ_USER=${MQ_USER}
+      - MQ_PASS=${MQ_PASS}
+      - URLS_QUEUE=${URLS_QUEUE}
+      - DOWNLOADED_PAGES_QUEUE=${DOWNLOADED_PAGES_QUEUE}
+      - PARSED_PAGES_QUEUE=${PARSED_PAGES_QUEUE}
+
+  seclab_result_processor:
+    restart: unless-stopped
+    depends_on:
+      - rabbitmq
+    build:
+      context: .
+      dockerfile: parsing_pipelines/seclab_microservices/result_processor/Dockerfile
+    environment:
+      - MQ_HOST=rabbitmq
+      - MQ_PORT=5672
+      - MQ_USER=${MQ_USER}
+      - MQ_PASS=${MQ_PASS}
+      - PROCESSED_PAGES_QUEUE=${PROCESSED_PAGES_QUEUE}
+      - PARSED_PAGES_QUEUE=${PARSED_PAGES_QUEUE}
+
+  seclab_db_connector:
+    restart: unless-stopped
+    depends_on:
+      - rabbitmq
+      - elasticdb
+    build:
+      context: .
+      dockerfile: parsing_pipelines/seclab_microservices/db_connector/Dockerfile
+    environment:
+      - MQ_HOST=rabbitmq
+      - MQ_PORT=5672
+      - MQ_USER=${MQ_USER}
+      - MQ_PASS=${MQ_PASS}
+      - PROCESSED_PAGES_QUEUE=${PROCESSED_PAGES_QUEUE}
+      - ELASTIC_LOGIN=${ELASTIC_LOGIN}
+      - ELASTIC_PASS=${ELASTIC_PASS}
+      - ELASTIC_URL=http://elasticdb:9200
+
+volumes:
+  elasticdb-volume:
+  rabbitmq-mq-volume:
